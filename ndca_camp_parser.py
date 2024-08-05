@@ -6,25 +6,29 @@ from card import Card, TAG_NAME
 import argparse
 from typing import List
 import tqdm
+import pickle
+import glob
+import hashlib
 
-CITE_NAME = "13 pt Bold"
+def cards_to_dict(cards):
+  json_dict = [{
+    "tag": card.tag, 
+    "text": card.card_text, 
+    "highlights": card.highlighted_text, 
+    "underlines": card.underlined_text,
+    "emphasis": card.emphasized_text,
+    "cite": card.cite,
+    "cite_emphasis": card.cite_emphasis,
+    "run_text": card.run_text,
+    "highlight_labels": card.highlight_labels,
+    "underline_labels": card.underline_labels,
+    "emphasis_labels": card.emphasis_labels,
+    "additional_info": card.additional_info
+  } for card in cards]
+  return json_dict
 
-#def parse_cites(filename):
-#  document = Document(filename)
-#  cites = []
-#  print("Parsing " + filename)
-#  print("Found " + str(len(document.paragraphs)) + " paragraphs")
-#
-#  for paragraph in document.paragraphs:
-#    cite = paragraph.text
-#    for r in paragraph.runs:
-#      if CITE_NAME in r.style.name or (r.style.font.bold or r.font.bold):
-#        cite = cite.replace(r.text, "**" + r.text + "**")
-#    cites.append(cite)
-#  
-#  return cites
 
-def parse_cards(filename: str, source: str) -> List[Card]:
+def parse_cards(filename: str, additional_info) -> List[Card]:
   document = Document(filename)
   cards = []
   current_card = []
@@ -32,7 +36,7 @@ def parse_cards(filename: str, source: str) -> List[Card]:
   for paragraph in document.paragraphs:
     if paragraph.style.name == TAG_NAME:
       try:
-        cards.append(Card(current_card, additional_info={'camp_or_other_source': source, 'filename': filename}))
+        cards.append(Card(current_card, additional_info=additional_info))
       except Exception as e:
         continue
       finally:
@@ -45,36 +49,44 @@ def parse_cards(filename: str, source: str) -> List[Card]:
 if __name__ == "__main__":
   # Parse command line arguments
   parser = argparse.ArgumentParser()
-  parser.add_argument("directory", type=str, help="path to a directory of docx files.")
-  parser.add_argument("-o", "--output", type=str, help="path to output file (default: output.json)", default="output.jsonl")
+  parser.add_argument("directory", type=str, help="path to a directory of directories, each of which should contain docx files. e.g., files/Emory/Aff1.docx")
+  parser.add_argument("-p", "--previous", type=str, help="previous parse results (for updating the file)")
+  parser.add_argument("-o", "--output", type=str, help="path to output file (default: output.json)", default="TEMPORARY.jsonl")
 
   args = parser.parse_args()
 
   # Get list of files to parse
-  files_to_parse = {"root": []}
-  assert os.path.isdir(args.directory), "Expected directory."
-  for file_or_dir in os.listdir(args.directory):
-    if os.path.isfile(file_or_dir):
-       files_to_parse["root"].append(args.directory + "/" + file_or_dir)
-    elif os.path.isdir(args.directory + "/" + file_or_dir):
-        files_to_parse[file_or_dir] = []
-        for file in os.listdir(args.directory + "/" + file_or_dir):
-            assert not os.path.isdir(args.directory + "/" + file_or_dir + "/" + file)
-            if file.endswith(".docx"):
-                files_to_parse[file_or_dir].append(args.directory + "/" + file_or_dir + "/" + file)
-    else:
-        print(f"File not found: {file_or_dir}")
-        sys.exit(1)
+  files_to_parse = glob.glob(args.directory + "/*/*")
+
+  cards = []
+  files_to_skip = set()
+  if args.previous:
+    cards = list(jsonlines.Reader(open(args.previous)))
+    print(f"loaded {len(cards)} previous cards.")
+    files_to_skip = set(
+      map(
+        lambda x: x['additional_info']['md5sum'],
+        cards
+      )
+    )
+    print(f"skipping {len(files_to_skip)} files.")
   
   # Parse each file into a list of cards
   cards = []
-  for source_directory, docx_path in tqdm.tqdm([(key, value) for key, values in files_to_parse.items() for value in values]):  
+  for source_directory, docx_filename in [(path[0], path[1]) for path in map(lambda y: y.replace(args.directory, "").split(os.sep), files_to_parse)]:
+    docx_path = args.directory + os.sep + source_directory + os.sep + docx_filename
     try:
-        parsed_cards = parse_cards(docx_path, source=source_directory)
+        hash = hashlib.md5(open(docx_path, 'rb').read()).hexdigest()
+        if hash in files_to_skip:
+          print(f"Skipping {docx_path}")
+          continue
+        parsed_cards = parse_cards(docx_path, additional_info={"filename": docx_filename, "md5sum": hash, "camp_or_other_source": source_directory})
         cards.extend(parsed_cards)
     except Exception as e:
         print(f"Error parsing {docx_path} from {source_directory}.")
         continue
+    with open("cache.pickle", "wb") as fh:
+      pickle.dump(cards_to_dict(cards), fh)
 
   print("Found " + str(len(cards)) + " total cards")
 
@@ -122,22 +134,7 @@ if __name__ == "__main__":
     card.run_text = [word.replace("\u2018", "'").replace("\u2019", "'").replace("\u2014", "-") for word in card.run_text]
     
   # Write cards to JSON file
-  json_dict = [{
-    "tag": card.tag, 
-    "text": card.card_text, 
-    "highlights": card.highlighted_text, 
-    "underlines": card.underlined_text,
-    "emphasis": card.emphasized_text,
-    "cite": card.cite,
-    "cite_emphasis": card.cite_emphasis,
-    "run_text": card.run_text,
-    "highlight_labels": card.highlight_labels,
-    "underline_labels": card.underline_labels,
-    "emphasis_labels": card.emphasis_labels,
-    "additional_info": card.additional_info
-  } for card in cards]
-
+  json_dict = cards_to_dict(cards)
   output_file = args.output
-
   with jsonlines.Writer(open(output_file, 'w')) as fh:
     fh.write_all(json_dict)
