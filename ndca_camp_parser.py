@@ -58,15 +58,12 @@ if __name__ == "__main__":
   # Get list of files to parse
   files_to_parse = glob.glob(args.directory + "/*/*")
 
-  cards = []
   files_to_skip = set()
   if args.previous:
-    cards = list(jsonlines.Reader(open(args.previous)))
-    print(f"loaded {len(cards)} previous cards.")
     files_to_skip = set(
       map(
         lambda x: x['additional_info']['md5sum'],
-        cards
+        jsonlines.Reader(open(args.previous))
       )
     )
     print(f"skipping {len(files_to_skip)} files.")
@@ -87,6 +84,7 @@ if __name__ == "__main__":
         continue
     with open("cache.pickle", "wb") as fh:
       pickle.dump(cards_to_dict(cards), fh)
+      print(f"saved {len(cards)} to the processing cache.")
 
   print("Found " + str(len(cards)) + " total cards")
 
@@ -132,9 +130,15 @@ if __name__ == "__main__":
     card.highlighted_text = [word.replace("\u2018", "'").replace("\u2019", "'").replace("\u2014", "-") for word in card.highlighted_text]
     card.emphasized_text = [word.replace("\u2018", "'").replace("\u2019", "'").replace("\u2014", "-") for word in card.emphasized_text]
     card.run_text = [word.replace("\u2018", "'").replace("\u2019", "'").replace("\u2014", "-") for word in card.run_text]
-    
-  # Write cards to JSON file
-  json_dict = cards_to_dict(cards)
+  
+  if args.previous:
+    json_dict = list(jsonlines.Reader(open(args.previous)))
+    json_dict.extend(cards_to_dict(cards))
+    print(f"\t...but actually writing {len(json_dict)} files because we're combining with {args.previous}.")
+  else:
+    json_dict = cards_to_dict(cards)
+
   output_file = args.output
   with jsonlines.Writer(open(output_file, 'w')) as fh:
     fh.write_all(json_dict)
+
