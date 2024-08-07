@@ -77,7 +77,14 @@ if __name__ == "__main__":
         if hash in files_to_skip:
           print(f"Skipping {docx_path}")
           continue
-        parsed_cards = parse_cards(docx_path, additional_info={"filename": docx_filename, "md5sum": hash, "camp_or_other_source": source_directory})
+        parsed_cards = parse_cards(docx_path, 
+                                   additional_info={
+                                     "filename": docx_filename, 
+                                     "md5sum": hash, 
+                                     "camp_or_other_source": source_directory
+                                  })
+        for i, c in enumerate(parsed_cards):
+          c["additional_info"]["order"] = i+1
         cards.extend(parsed_cards)
     except Exception as e:
         print(f"Error parsing {docx_path} from {source_directory}.")
